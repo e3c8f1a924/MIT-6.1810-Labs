@@ -1,0 +1,55 @@
+# 自动运行 xv6 lab 评分脚本（make grade）。
+#
+# 原理：make grade 会先 make clean，再执行 ./grade-lab-$(LAB)，
+# 其中 LAB 来自 conf/lab.mk。每个 lab 分支（util/syscall/pgtbl/...）
+# 都自带自己的 conf/lab.mk 和 grade-lab-* 脚本，因此这个 workflow
+# 不需要任何修改就能在所有 lab 分支上工作。
+
+name: grade
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支的新推送取消还在跑的旧任务，节省 Actions 时长
+concurrency:
+  group: grade-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grade:
+    # 必须用 ubuntu-24.04：Makefile 要求 QEMU >= 7.2，
+    # 22.04 的 qemu-system-misc 只有 6.2，24.04 是 8.2。
+    # 包名与课程官方 tools 页面的 Ubuntu 指南一致。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install RISC-V toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            bc \
+            perl \
+            qemu-system-misc \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu
+
+      - name: Show tool versions
+        run: |
+          qemu-system-riscv64 --version | head -n 1
+          riscv64-linux-gnu-gcc --version | head -n 1
+
+      - name: Run make grade
+        run: |
+          # 从 conf/lab.mk 读取当前分支要评的 lab；没有设置就跳过
+          LAB=$(sed -n 's/^LAB=//p' conf/lab.mk 2>/dev/null)
+          if [ -z "$LAB" ]; then
+            echo "::warning::conf/lab.mk 中没有设置 LAB，跳过评分"
+            exit 0
+          fi
+          echo "Grading lab: $LAB"
+          make grade
