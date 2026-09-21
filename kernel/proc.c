@@ -146,6 +146,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Clear syscall_rej
+  p -> syscall_rej = 0;
+
   return p;
 }
 
@@ -278,6 +281,9 @@ kfork(void)
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+
+  // Inherit syscall_rej.
+  np -> syscall_rej = p -> syscall_rej;
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
