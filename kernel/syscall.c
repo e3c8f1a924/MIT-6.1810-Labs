@@ -138,8 +138,15 @@ syscall(void)
 
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    int rejected = ((p -> syscall_rej) >> num) & 1;
+    if (num == SYS_exec || num == SYS_open) {
+      if (argstr(0, p -> pathbuf, MAXPATH) >= 0) {
+        if (!strncmp(p -> pathbuf, p -> workspace, sizeof(p -> workspace))) rejected = 0;
+      }
+    }
+
     // Check if the syscall should be rejected.
-    if (p -> syscall_rej & (1L << num)) {
+    if (rejected) {
       p -> trapframe -> a0 = -1;
     } else {
       // Use num to lookup the system call function for num, call it,

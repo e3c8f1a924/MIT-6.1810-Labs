@@ -148,6 +148,7 @@ found:
 
   // Clear syscall_rej
   p -> syscall_rej = 0;
+  memset(&p->workspace, 0, sizeof(p->workspace));
 
   return p;
 }
@@ -292,6 +293,7 @@ kfork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+  safestrcpy(np->workspace, p->workspace, sizeof(p->workspace));
 
   pid = np->pid;
 

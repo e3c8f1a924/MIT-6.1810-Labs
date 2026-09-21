@@ -106,4 +106,6 @@ struct proc {
   char name[16];               // Process name (debugging)
 
   uint64 syscall_rej;          // Set of syscalls to reject
+  char workspace[MAXPATH];     // The path allowed to open/exec despite the limit of syscall_rej
+  char pathbuf[MAXPATH];
 };

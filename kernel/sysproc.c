@@ -110,7 +110,12 @@ uint64 sys_interpose(void) {
   uint64 mask;
   argaddr(0, &mask);
 
-  myproc() -> syscall_rej |= mask;
+  struct proc *p = myproc();
+
+  if (argstr(1, p -> pathbuf, MAXPATH) < 0) return -1;
+
+  p -> syscall_rej |= mask;
+  safestrcpy(p -> workspace, p -> pathbuf, MAXPATH);
 
   return 0;
 }
