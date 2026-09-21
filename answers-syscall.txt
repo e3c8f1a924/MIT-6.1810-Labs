@@ -1,0 +1,6 @@
+1. usertrap()
+2. 0xf; the syscall number of `open`
+3. user, since `$sstatus = 0x200000022`, `& (1L << 8)` gets 0
+4. `lw	a3,0(zero)`; a3
+5. because kernel virtual address `0` is not mapped, accessing it leads to Load page fault (scause = 0xd)
+6. init; 0x1
