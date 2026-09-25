@@ -202,6 +202,25 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+#ifdef LAB_PGTBL
+  struct usyscall *usc_page = kalloc();
+  if (!usc_page) {
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+  usc_page -> pid = p -> pid;
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)usc_page, PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    kfree(usc_page);
+    return 0;
+  }
+#endif
+
   return pagetable;
 }
 
@@ -212,6 +231,9 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+#ifdef LAB_PGTBL
+  uvmunmap(pagetable, USYSCALL, 1, 0);
+#endif
   uvmfree(pagetable, sz);
 }
 

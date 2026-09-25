@@ -1,0 +1,48 @@
+## Inspect a user-process page table
+
+1. text: the program itself, R-XU
+    ```
+    va 0x0 pte 0x21FC885B pa 0x87F22000 perm 0x5B
+    va 0x1000 pte 0x21FC7C5B pa 0x87F1F000 perm 0x5B
+    ```
+2. data: the static data of the program, RW-U
+    ```
+    va 0x2000 pte 0x21FC7817 pa 0x87F1E000 perm 0x17
+    ```
+3. guard page: prevent the process from stack-overflow, RW--
+    ```
+    va 0x3000 pte 0x21FC7407 pa 0x87F1D000 perm 0x7
+    ```
+4. stack: the stack of the program, RW-U
+    ```
+    va 0x4000 pte 0x21FC70D7 pa 0x87F1C000 perm 0xD7
+    ```
+5. heap / unused: dynamically allocated, R-WU (0x0 if not allocated)
+    ```
+    va 0x5000 pte 0x0 pa 0x0 perm 0x0
+    va 0x6000 pte 0x0 pa 0x0 perm 0x0
+    va 0x7000 pte 0x0 pa 0x0 perm 0x0
+    va 0x8000 pte 0x0 pa 0x0 perm 0x0
+    va 0x9000 pte 0x0 pa 0x0 perm 0x0
+    ...
+    va 0x3FFFFF6000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFF7000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFF8000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFF9000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFFA000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFFB000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFFC000 pte 0x0 pa 0x0 perm 0x0
+    va 0x3FFFFFD000 pte 0x0 pa 0x0 perm 0x0
+    ```
+6. trap frame: R-W-
+    ```
+    va 0x3FFFFFE000 pte 0x21FD08C7 pa 0x87F42000 perm 0xC7
+    ```
+7. trampoline: R-X-
+    ```
+    va 0x3FFFFFF000 pte 0x2000184B pa 0x80006000 perm 0x4B
+    ```
+## Speed up system calls
+
+- uptime: by add a member `ticks` in the USYSCALL page, and synchronize it with the global `ticks` variable when clock interruption happens.
+- pgpte / kpgtbl: by mapping the whole page table in the process address space, but since the size of the page table varies, and it's not safe to expose the page table to user processes, it's not feasible.
