@@ -46,3 +46,21 @@
 
 - uptime: by add a member `ticks` in the USYSCALL page, and synchronize it with the global `ticks` variable when clock interruption happens.
 - pgpte / kpgtbl: by mapping the whole page table in the process address space, but since the size of the page table varies, and it's not safe to expose the page table to user processes, it's not feasible.
+
+## Print a page table
+
+```
+page table 0x0000000087f20000
+ ..0x0000000000000000: pte 0x0000000021fc6c01 pa 0x0000000087f1b000
+ .. ..0x0000000000000000: pte 0x0000000021fc6801 pa 0x0000000087f1a000
+ .. .. ..0x0000000000000000: pte 0x0000000021fc705b pa 0x0000000087f1c000   text, 0x5B
+ .. .. ..0x0000000000001000: pte 0x0000000021fc645b pa 0x0000000087f19000   text, 0x5B
+ .. .. ..0x0000000000002000: pte 0x0000000021fc60d7 pa 0x0000000087f18000   data, 0x17
+ .. .. ..0x0000000000003000: pte 0x0000000021fc5c07 pa 0x0000000087f17000   guard page, 0x7
+ .. .. ..0x0000000000004000: pte 0x0000000021fc58d7 pa 0x0000000087f16000   stack, 0xD7
+ ..0x0000003fc0000000: pte 0x0000000021fc7c01 pa 0x0000000087f1f000
+ .. ..0x0000003fffe00000: pte 0x0000000021fc7801 pa 0x0000000087f1e000
+ .. .. ..0x0000003fffffd000: pte 0x0000000021fc7453 pa 0x0000000087f1d000   usyscall, 0x53
+ .. .. ..0x0000003fffffe000: pte 0x0000000021fcfcc7 pa 0x0000000087f3f000   trap frame, 0xC7
+ .. .. ..0x0000003ffffff000: pte 0x000000002000184b pa 0x0000000080006000   trampoline, 0x4B
+```
