@@ -263,11 +263,11 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
+    if((sz = uvmalloc(p->pagetable, 0, sz, sz + n, PTE_W, 2)) == 0) {
       return -1;
     }
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    sz = uvmdealloc(p->pagetable, 0, sz, sz + n, 2);
   }
   p->sz = sz;
   return 0;
@@ -288,7 +288,7 @@ kfork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, 0, np->pagetable, p->sz, 2) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;

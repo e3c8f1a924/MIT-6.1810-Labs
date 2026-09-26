@@ -259,33 +259,59 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
-uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+uvmalloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int xperm, int lev)
 {
-  char *mem;
-  uint64 a;
-  int sz;
-
   if(newsz < oldsz)
     return oldsz;
-
-  oldsz = PGROUNDUP(oldsz);
-  for(a = oldsz; a < newsz; a += sz){
-    sz = PGSIZE;
-    mem = kalloc();
-    if(mem == 0){
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
+  if (!pagetable) panic("uvmalloc: no pagetable");
+  if (lev < 0 || lev > 2) panic("uvmalloc: invalid lev");
+  for (int i = 0; i < 512; i++) {
+    uint64 cur_va_l = va | (((uint64)i) << PXSHIFT(lev));
+    uint64 cur_va_r = cur_va_l + (1ull << PXSHIFT(lev));
+    if (cur_va_r <= oldsz) continue;
+    if (cur_va_l >= newsz) break;
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) && (pte & PTE_R)) continue;
+    char *mem;
+    if (lev == 1 && !(pte & PTE_V) && cur_va_l >= oldsz && cur_va_r - PGSIZE < newsz
+      && (mem = super_kalloc())
+    ) {
+      memset(mem, 0, SUPERPGSIZE);
+      pagetable[i] = PA2PTE((uint64)mem) | xperm | PTE_R | PTE_V | PTE_U;
+      continue;
     }
-#ifndef LAB_SYSCALL
-    memset(mem, 0, sz);
- #endif
-    if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
-      kfree(mem);
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
+    if (lev == 0 && !(pte & PTE_V)) {
+      if (!(mem = kalloc())) {
+        uvmdealloc(pagetable, 0, cur_va_l, oldsz, 2);
+        return 0;
+      }
+      memset(mem, 0, PGSIZE);
+      pagetable[i] = PA2PTE((uint64)mem) | xperm | PTE_R | PTE_V | PTE_U;
+      continue;
     }
+    if (!(pte & PTE_V)) {
+      if (!(mem = kalloc())) {
+        uvmdealloc(pagetable, 0, cur_va_l, oldsz, 2);
+        return 0;
+      }
+      memset(mem, 0, PGSIZE);
+      pte = pagetable[i] = PA2PTE(mem) | PTE_V;
+    }
+    if (!uvmalloc((pagetable_t)PTE2PA(pte), cur_va_l, oldsz, newsz, xperm, lev - 1)) return 0;
   }
   return newsz;
+}
+
+uint64 demote(pte_t pte) {
+  uint64 pa = PTE2PA(pte);
+  pagetable_t pgt = (pagetable_t)(pa + SUPERPGSIZE - PGSIZE);
+  uint64 flags = PTE_FLAGS(pte);
+  for (int i = 0; i < 511; i++) {
+    uint64 cur_pa = pa | (((uint64)i) << PXSHIFT(0));
+    pgt[i] = PA2PTE(cur_pa) | flags;
+  }
+  pgt[511] = 0;
+  return (uint64)pgt;
 }
 
 // Deallocate user pages to bring the process size from oldsz to
@@ -293,16 +319,43 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 // need to be less than oldsz.  oldsz can be larger than the actual
 // process size.  Returns the new process size.
 uint64
-uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+uvmdealloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int lev)
 {
   if(newsz >= oldsz)
     return oldsz;
-
-  if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
-    int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
-    uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
+  if (!pagetable) panic("uvmalloc: no pagetable");
+  if (lev < 0 || lev > 2) panic("uvmalloc: invalid lev");
+  for (int i = 511; i >= 0; i--) {
+    uint64 cur_va_l = va | (((uint64)i) << PXSHIFT(lev));
+    uint64 cur_va_r = cur_va_l + (1ull << PXSHIFT(lev));
+    if (cur_va_r - PGSIZE < newsz) break;
+    if (cur_va_l >= oldsz) continue;
+    pte_t pte = pagetable[i];
+    if (!(pte & PTE_V)) continue;
+    if (pte & PTE_R) {
+      if (lev == 0) {
+        uint64 pa = PTE2PA(pte);
+        if (pa < SUPER_PGSTART) kfree((void *)pa);
+        pagetable[i] = 0;
+        continue;
+      } else if (lev == 1) {
+        if (cur_va_l >= newsz) {
+          super_kfree((void *)PTE2PA(pte));
+          pagetable[i] = 0;
+          continue;
+        } else {
+          pagetable[i] = PA2PTE(demote(pte)) | PTE_V;
+        }
+      }
+    }
+    uvmdealloc((pagetable_t)PTE2PA(pte), cur_va_l, oldsz, newsz, lev - 1);
+    if (cur_va_l >= newsz && cur_va_r <= oldsz) {
+      uint64 pa = PTE2PA(pte);
+      if (pa < SUPER_PGSTART) kfree((void *)pa);
+      else super_kfree((void *)pa);
+      pagetable[i] = 0;
+    }
   }
-
   return newsz;
 }
 
@@ -332,8 +385,7 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
-  if(sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+  uvmdealloc(pagetable, 0, sz, 0, 2);
   freewalk(pagetable);
 }
 
@@ -344,36 +396,34 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+uvmcopy(pagetable_t old, uint64 va, pagetable_t new, uint64 sz, int lev)
 {
-  pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  char *mem;
-  int szinc = PGSIZE;
-
-  for(i = 0; i < sz; i += szinc){
-    if((pte = walk(old, i, 0)) == 0)
-      continue;
-    if((*pte & PTE_V) == 0) {
-      continue;
+  for (int i = 0; i < 512; i++) {
+    uint64 cur_va_l = va | (((uint64)i) << PXSHIFT(lev));
+    if (cur_va_l >= sz) break;
+    pte_t pte = old[i];
+    if (!(pte & PTE_V)) continue;
+    uint64 pa = PTE2PA(pte), flags = PTE_FLAGS(pte);
+    pagetable_t mem;
+    if ((pte & PTE_R) && lev == 1) {
+      mem = super_kalloc();
+      memset(mem, 0, SUPERPGSIZE);
+    } else {
+      mem = kalloc();
+      memset(mem, 0, PGSIZE);
     }
-    szinc = PGSIZE;
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+    if (!mem) {
+      uvmdealloc(new, 0, sz, 0, 2);
+      return -1;
+    }
+    new[i] = PA2PTE(((uint64)mem)) | flags;
+    if (pte & PTE_R) {
+      memmove(mem, (void *)pa, lev == 1 ? SUPERPGSIZE : PGSIZE);
+    } else {
+      if (uvmcopy((pagetable_t)pa, cur_va_l, mem, sz, lev - 1) < 0) return -1;
     }
   }
   return 0;
-
- err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
-  return -1;
 }
 
 // mark a PTE invalid for user access.
