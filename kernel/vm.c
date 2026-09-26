@@ -259,10 +259,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
-uvmalloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int xperm, int lev)
+uvmalloc_walk(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int xperm, int lev)
 {
-  if(newsz < oldsz)
-    return oldsz;
   if (!pagetable) panic("uvmalloc: no pagetable");
   if (lev < 0 || lev > 2) panic("uvmalloc: invalid lev");
   for (int i = 0; i < 512; i++) {
@@ -282,7 +280,6 @@ uvmalloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int xperm
     }
     if (lev == 0 && !(pte & PTE_V)) {
       if (!(mem = kalloc())) {
-        uvmdealloc(pagetable, 0, cur_va_l, oldsz, 2);
         return 0;
       }
       memset(mem, 0, PGSIZE);
@@ -291,15 +288,22 @@ uvmalloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int xperm
     }
     if (!(pte & PTE_V)) {
       if (!(mem = kalloc())) {
-        uvmdealloc(pagetable, 0, cur_va_l, oldsz, 2);
         return 0;
       }
       memset(mem, 0, PGSIZE);
       pte = pagetable[i] = PA2PTE(mem) | PTE_V;
     }
-    if (!uvmalloc((pagetable_t)PTE2PA(pte), cur_va_l, oldsz, newsz, xperm, lev - 1)) return 0;
+    if (!uvmalloc_walk((pagetable_t)PTE2PA(pte), cur_va_l, oldsz, newsz, xperm, lev - 1)) return 0;
   }
   return newsz;
+}
+uint64
+uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm) {
+  if(newsz < oldsz)
+    return oldsz;
+  uint64 ret = uvmalloc_walk(pagetable, 0, oldsz, newsz, xperm, 2);
+  if (!ret) uvmdealloc(pagetable, newsz, oldsz);
+  return ret;
 }
 
 uint64 demote(pte_t pte) {
@@ -319,12 +323,10 @@ uint64 demote(pte_t pte) {
 // need to be less than oldsz.  oldsz can be larger than the actual
 // process size.  Returns the new process size.
 uint64
-uvmdealloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int lev)
+uvmdealloc_walk(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int lev)
 {
-  if(newsz >= oldsz)
-    return oldsz;
-  if (!pagetable) panic("uvmalloc: no pagetable");
-  if (lev < 0 || lev > 2) panic("uvmalloc: invalid lev");
+  if (!pagetable) panic("uvmdealloc: no pagetable");
+  if (lev < 0 || lev > 2) panic("uvmdealloc: invalid lev");
   for (int i = 511; i >= 0; i--) {
     uint64 cur_va_l = va | (((uint64)i) << PXSHIFT(lev));
     uint64 cur_va_r = cur_va_l + (1ull << PXSHIFT(lev));
@@ -348,7 +350,7 @@ uvmdealloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int lev
         }
       }
     }
-    uvmdealloc((pagetable_t)PTE2PA(pte), cur_va_l, oldsz, newsz, lev - 1);
+    uvmdealloc_walk((pagetable_t)PTE2PA(pte), cur_va_l, oldsz, newsz, lev - 1);
     if (cur_va_l >= newsz && cur_va_r <= oldsz) {
       uint64 pa = PTE2PA(pte);
       if (pa < SUPER_PGSTART) kfree((void *)pa);
@@ -357,6 +359,12 @@ uvmdealloc(pagetable_t pagetable, uint64 va, uint64 oldsz, uint64 newsz, int lev
     }
   }
   return newsz;
+}
+uint64
+uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
+  if(newsz >= oldsz)
+    return oldsz;
+  return uvmdealloc_walk(pagetable, 0, oldsz, newsz, 2);
 }
 
 // Recursively free page-table pages.
@@ -385,7 +393,7 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
-  uvmdealloc(pagetable, 0, sz, 0, 2);
+  uvmdealloc(pagetable, sz, 0);
   freewalk(pagetable);
 }
 
@@ -396,7 +404,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
-uvmcopy(pagetable_t old, uint64 va, pagetable_t new, uint64 sz, int lev)
+uvmcopy_walk(pagetable_t old, uint64 va, pagetable_t new, uint64 sz, int lev)
 {
   for (int i = 0; i < 512; i++) {
     uint64 cur_va_l = va | (((uint64)i) << PXSHIFT(lev));
@@ -413,17 +421,22 @@ uvmcopy(pagetable_t old, uint64 va, pagetable_t new, uint64 sz, int lev)
       memset(mem, 0, PGSIZE);
     }
     if (!mem) {
-      uvmdealloc(new, 0, sz, 0, 2);
       return -1;
     }
     new[i] = PA2PTE(((uint64)mem)) | flags;
     if (pte & PTE_R) {
       memmove(mem, (void *)pa, lev == 1 ? SUPERPGSIZE : PGSIZE);
     } else {
-      if (uvmcopy((pagetable_t)pa, cur_va_l, mem, sz, lev - 1) < 0) return -1;
+      if (uvmcopy_walk((pagetable_t)pa, cur_va_l, mem, sz, lev - 1) < 0) return -1;
     }
   }
   return 0;
+}
+int
+uvmcopy(pagetable_t old, pagetable_t new, uint64 sz) {
+  int ret = uvmcopy_walk(old, 0, new, sz, 2);
+  if (ret < 0) uvmdealloc(new, sz, 0);
+  return ret;
 }
 
 // mark a PTE invalid for user access.
