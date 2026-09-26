@@ -27,4 +27,5 @@ barrier
 *.dSYM
 *.pcap
 TAGS
-/fs.img.bk
+
+.vscode
