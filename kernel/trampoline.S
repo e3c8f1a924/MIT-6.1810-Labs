@@ -94,6 +94,9 @@ uservec:
         # flush now-stale user entries from the TLB.
         sfence.vma zero, zero
 
+        # clear s0 to avoid stack frame injection
+        li s0, 0
+
         # call usertrap()
         jalr t0
 

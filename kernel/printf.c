@@ -140,6 +140,7 @@ panic(char *s)
   printf("panic: ");
   printf("%s\n", s);
   panicked = 1; // freeze uart output from other CPUs
+  backtrace();
   for(;;)
     ;
 }
@@ -148,4 +149,16 @@ void
 printfinit(void)
 {
   initlock(&pr.lock, "pr");
+}
+
+void backtrace() {
+  printf("backtrace:\n");
+  uint64 sfp, sp = r_sp();
+  asm volatile("mv %0, s0" : "=r"(sfp));
+  while (PGROUNDDOWN(sfp - 8) == PGROUNDDOWN(sp) && PGROUNDDOWN(sfp - 16) == PGROUNDDOWN(sp)) {
+    uint64 nxt = *(uint64 *)(sfp - 16);
+    if (PGROUNDDOWN(nxt - 8) != PGROUNDDOWN(sp) || PGROUNDDOWN(nxt - 16) != PGROUNDDOWN(sp)) break;
+    printf("%p\n", (void *)*(uint64 *)(sfp - 8));
+    sfp = nxt;
+  }
 }
