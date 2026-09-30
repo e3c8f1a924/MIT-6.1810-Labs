@@ -1,0 +1,6 @@
+1. a0, a1 and a2, maybe more (not visible in call.asm)
+2. both at 0x2e
+3. 0x074e
+4. 0x3c
+5. He110 World; 0x726c6400; no
+6. a junk value; because `a2` is not intensionally set and can be anything depending on the context
