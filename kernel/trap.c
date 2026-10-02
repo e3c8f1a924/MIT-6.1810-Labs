@@ -68,6 +68,14 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+    if (which_dev == 2 && p -> alarm_ticks) {
+      p -> ticks_acc++;
+      if (!p -> in_sig && p -> ticks_acc >= p -> alarm_ticks) {
+        p -> in_sig = 1, p -> ticks_acc = 0;
+        memmove(&(p -> sigframe), p -> trapframe, sizeof(p -> sigframe));
+        p -> trapframe -> epc = p -> alarm_fp;
+      }
+    }
   } else if((r_scause() == 15 || r_scause() == 13) &&
             vmfault(p->pagetable, r_stval(), (r_scause() == 13)? 1 : 0) != 0) {
     // page fault on lazily-allocated page

@@ -146,6 +146,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  memset(&p->sigframe, 0, sizeof(p->sigframe));
+  p -> in_sig = p -> alarm_ticks = p -> ticks_acc = 0;
+  p -> alarm_fp = 0;
+
   return p;
 }
 
@@ -275,6 +279,10 @@ kfork(void)
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
+
+  memmove(&(np -> sigframe), &(p -> sigframe), sizeof(p -> sigframe));
+  np -> alarm_ticks = p -> alarm_ticks, np -> ticks_acc = p -> ticks_acc;
+  np -> in_sig = p -> in_sig, np -> alarm_fp = p -> alarm_fp;
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
