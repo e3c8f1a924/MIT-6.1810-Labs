@@ -56,6 +56,11 @@ void            itrunc(struct inode*);
 void            ireclaim(int);
 
 // kalloc.c
+char            getpgref(uint64);
+void            pglink(uint64);
+void            pgunlink(uint64);
+void            pgrelink(uint64, uint64);
+uint64          pgcowcopy(uint64);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
@@ -155,6 +160,7 @@ void            kvminit(void);
 void            kvminithart(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
+int             uvmmappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
 uint64          uvmalloc(pagetable_t, uint64, uint64, int);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);

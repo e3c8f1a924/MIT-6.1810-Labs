@@ -14,6 +14,13 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+char pgref[(PHYSTOP - KERNBASE) / PGSIZE];
+struct spinlock pgref_lock;
+
+#define PA2PGREF(pa) (((pa) - KERNBASE) / PGSIZE)
+
+char getpgref(uint64 pa) { return pgref[PA2PGREF(pa)]; }
+
 struct run {
   struct run *next;
 };
@@ -27,6 +34,7 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&pgref_lock, "pgref");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -35,6 +43,7 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
+  memset(pgref, 0, sizeof(pgref));
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
 }
@@ -50,6 +59,8 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+  
+  if (getpgref((uint64)pa)) panic("kfree: dangling ref");
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -79,4 +90,38 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void pgrelink(uint64 from, uint64 to) {
+  acquire(&pgref_lock);
+  pgref[PA2PGREF(from)]--;
+  pgref[PA2PGREF(to)]++;
+  release(&pgref_lock);
+}
+
+void pglink(uint64 pa) {
+  acquire(&pgref_lock);
+  pgref[PA2PGREF(pa)]++;
+  release(&pgref_lock);
+}
+
+void pgunlink(uint64 pa) {
+  acquire(&pgref_lock);
+  pgref[PA2PGREF(pa)]--;
+  if (!pgref[PA2PGREF(pa)]) kfree((void *)pa);
+  release(&pgref_lock);
+}
+
+uint64 pgcowcopy(uint64 pa) {
+  acquire(&pgref_lock);
+  uint64 new_pa = pa;
+  if (pgref[PA2PGREF(pa)] > 1) {
+    new_pa = (uint64)kalloc();
+    if (!new_pa) return 0;
+    memmove((void *)new_pa, (const void *)pa, PGSIZE);
+  }
+  pgref[PA2PGREF(pa)]--;
+  pgref[PA2PGREF(new_pa)]++;
+  release(&pgref_lock);
+  return new_pa;
 }

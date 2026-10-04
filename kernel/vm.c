@@ -203,14 +203,43 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       continue;   
     if((*pte & PTE_V) == 0)  // has physical page been allocated?
       continue;
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
-    }
+    uint64 pa = PTE2PA(*pte);
+    if(do_free) pgunlink(pa);
     *pte = 0;
   }
 }
 
+int
+uvmmappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  uint64 a, last;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("uvmmappages: va not aligned");
+
+  if((size % PGSIZE) != 0)
+    panic("uvmmappages: size not aligned");
+
+  if(size == 0)
+    panic("uvmmappages: size");
+  
+  a = va;
+  last = va + size - PGSIZE;
+  for(;;){
+    if((pte = walk(pagetable, a, 1)) == 0)
+      return -1;
+    if(*pte & PTE_V)
+      panic("mappages: remap");
+    *pte = PA2PTE(pa) | perm | PTE_V | ((!!(perm & PTE_W)) * PTE_COW);
+    pglink(pa);
+    if(a == last)
+      break;
+    a += PGSIZE;
+    pa += PGSIZE;
+  }
+  return 0;
+}
 // Allocate PTEs and physical memory to grow a process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
@@ -230,7 +259,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+    if(uvmmappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -289,32 +318,26 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 
 // Given a parent process's page table, copy
 // its memory into a child's page table.
-// Copies both the page table and the
-// physical memory.
+// Copies the page table only.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
-  pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  char *mem;
+  pte_t *pte, *npte;
+  uint64 i, pa;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       continue;   // page table entry hasn't been allocated
     if((*pte & PTE_V) == 0)
       continue;   // physical page hasn't been allocated
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if((npte = walk(new, i, 1)) == 0){
       goto err;
     }
+    pa = PTE2PA(*pte);
+    *npte = (*pte &= ~PTE_W);
+    pglink(pa);
   }
   return 0;
 
@@ -359,7 +382,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
     pte = walk(pagetable, va0, 0);
     // forbid copyout over read-only user text pages.
-    if((*pte & PTE_W) == 0)
+    if((*pte & PTE_W) == 0 && !(pa0 = vmfault(pagetable, va0, 0)))
       return -1;
       
     n = PGSIZE - (dstva - va0);
@@ -459,13 +482,23 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     return 0;
   va = PGROUNDDOWN(va);
   if(ismapped(pagetable, va)) {
+    if (!read) {
+      pte_t *pte = walk(pagetable, va, 0);
+      if (*pte & PTE_COW) {
+        uint64 pa = PTE2PA(*pte);
+        uint64 new_pa = pgcowcopy(pa);
+        if (!new_pa) return 0;
+        *pte = PA2PTE(new_pa) | PTE_FLAGS(*pte) | PTE_W;
+        return new_pa;
+      }
+    }
     return 0;
   }
   mem = (uint64) kalloc();
   if(mem == 0)
     return 0;
   memset((void *) mem, 0, PGSIZE);
-  if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
+  if (uvmmappages(p->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
     kfree((void *)mem);
     return 0;
   }
