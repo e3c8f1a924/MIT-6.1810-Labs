@@ -1,3 +1,6 @@
+#define NPORT 16
+#define NUDPBUF 16
+
 //
 // endianness support
 //

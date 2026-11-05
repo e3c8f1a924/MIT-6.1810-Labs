@@ -19,6 +19,13 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+struct rxport {
+  uint16 port;
+  int bound;
+  char *bufs[NUDPBUF];
+  int head, tail, n;
+} ports[NPORT];
+
 void
 netinit(void)
 {
@@ -37,7 +44,23 @@ sys_bind(void)
   //
   // Your code here.
   //
-
+  int port;
+  argint(0, &port);
+  acquire(&netlock);
+  for (int i = 0; i < NPORT; i++) {
+    if (ports[i].bound && ports[i].port == port) {
+      release(&netlock);
+      return 0;
+    }
+  }
+  for (int i = 0; i < NPORT; i++) {
+    if (ports[i].bound) continue;
+    ports[i].port = port, ports[i].head = ports[i].tail = ports[i].n = 0;
+    ports[i].bound = 1;
+    release(&netlock);
+    return 0;
+  }
+  release(&netlock);
   return -1;
 }
 
@@ -52,8 +75,23 @@ sys_unbind(void)
   //
   // Optional: Your code here.
   //
-
-  return 0;
+  int port;
+  argint(0, &port);
+  acquire(&netlock);
+  for (int i = 0; i < NPORT; i++) {
+    if (ports[i].bound && ports[i].port == port) {
+      while (ports[i].n) {
+        kfree((void *)ports[i].bufs[ports[i].head]);
+        ports[i].head = (ports[i].head + 1) % NPORT;
+        ports[i].n--;
+      }
+      ports[i].bound = 0;
+      release(&netlock);
+      return 0;
+    }
+  }
+  release(&netlock);
+  return -1;
 }
 
 //
@@ -77,6 +115,60 @@ sys_recv(void)
   //
   // Your code here.
   //
+  int dport;
+  uint64 srcaddr, sportaddr, bufaddr;
+  int maxlen;
+  argint(0, &dport);
+  argaddr(1, &srcaddr);
+  argaddr(2, &sportaddr);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+  while (1) {
+    acquire(&netlock);
+    int bound = 0;
+    for (int i = 0; i < NPORT; i++) {
+      if (!ports[i].bound || ports[i].port != dport) continue;
+      struct proc *p = myproc();
+      if (!ports[i].n) {
+        acquire(&p -> lock);
+        release(&netlock);
+        p -> state = RUNNABLE;
+        sched();
+        release(&p -> lock);
+        bound = 1;
+        break;
+      }
+      struct eth *eth = (struct eth *)ports[i].bufs[ports[i].head];
+      struct ip *ip = (struct ip *)(eth + 1);
+      struct udp *udp = (struct udp *)(ip + 1);
+      int len = udp -> ulen - sizeof(struct udp);
+      if (len > maxlen) len = maxlen;
+      int src = ntohl(ip -> ip_src);
+      if (copyout(p -> pagetable, srcaddr, (char *)&src, 4)) {
+        release(&netlock);
+        return -1;
+      }
+      uint16 sport = ntohs(udp -> sport);
+      if (copyout(p -> pagetable, sportaddr, (char *)&sport, 2)) {
+        release(&netlock);
+        return -1;
+      }
+      if (copyout(p -> pagetable, bufaddr, (char *)(udp + 1), len)) {
+        release(&netlock);
+        return -1;
+      }
+      kfree(ports[i].bufs[ports[i].head]);
+      ports[i].head = (ports[i].head + 1) % NUDPBUF, ports[i].n--;
+      release(&netlock);
+      return len;
+    }
+    if (!bound) {
+      release(&netlock);
+      break;
+    }
+  }
+
   return -1;
 }
 
@@ -191,7 +283,29 @@ ip_rx(char *buf, int len)
   //
   // Your code here.
   //
-  
+
+  struct eth *eth = (struct eth *) buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+  struct udp *udp = (struct udp *)(ip + 1);
+
+  uint16 port = ntohs(udp -> dport);
+  len -= sizeof(struct eth) + sizeof(struct ip);
+  udp -> ulen = ntohs(udp -> ulen);
+  if (udp -> ulen > len) udp -> ulen = len;
+  acquire(&netlock);
+  for (int i = 0; i < NPORT; i++) {
+    if (!ports[i].bound || ports[i].port != port) continue;
+    if (ports[i].n < NUDPBUF) {
+      int idx = ports[i].tail;
+      ports[i].tail = (ports[i].tail + 1) % NUDPBUF;
+      ports[i].n++;
+      ports[i].bufs[idx] = buf;
+    } else break;
+    release(&netlock);
+    return;
+  }
+  release(&netlock);
+  kfree((void *)buf);
 }
 
 //
