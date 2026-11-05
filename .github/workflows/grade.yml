@@ -35,6 +35,7 @@ jobs:
             bc \
             perl \
             qemu-system-misc \
+            ipxe-qemu \
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu
 
